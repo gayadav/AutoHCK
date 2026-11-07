@@ -327,6 +327,7 @@ module AutoHCK
       apply_drive_aio_state
       validate_drive_aio_state
       apply_cpu_options_config
+      validate_cpu_maxcpus
       validate_vsm_state
       apply_vsm_state
     end
@@ -361,6 +362,18 @@ module AutoHCK
       end
 
       extra.split(',').each { |opt| @cpu_options << opt unless opt.empty? }
+    end
+
+    def validate_cpu_maxcpus
+      maxcpus = option_config('cpu_maxcpus')
+      return unless maxcpus
+
+      raise QemuHCKError, '--cpu-maxcpus must be a positive integer' unless maxcpus.positive?
+
+      cpu_count = option_config('cpu_count')
+      return unless cpu_count
+
+      raise QemuHCKError, "--cpu-maxcpus (#{maxcpus}) must be >= cpu_count (#{cpu_count})" if maxcpus < cpu_count
     end
 
     # This VSM configuration is supported only for 64-bit Windows guests.
@@ -582,6 +595,7 @@ module AutoHCK
                                                '@cpu@' => option_config('cpu'),
                                                '@cpu_options@' => option_config('cpu_options'),
                                                '@cpu_count@' => option_config('cpu_count'),
+                                               '@cpu_maxcpus@' => option_config('cpu_maxcpus')&.to_s,
                                                '@vnc_id@' => @vnc_id,
                                                '@vnc_port@' => @vnc_port,
                                                '@qemu_monitor_port@' => @monitor_port
@@ -782,6 +796,14 @@ module AutoHCK
       end
     end
 
+    def smp_option
+      if option_config('cpu_maxcpus')
+        '-smp @cpu_count@,maxcpus=@cpu_maxcpus@,sockets=@cpu_maxcpus@,cores=1,threads=1'
+      else
+        '-smp @cpu_count@,cores=@cpu_count@'
+      end
+    end
+
     # With some Windows versions, we have a problem with the boot order.
     # Add boot menu timeout (splash-time) to allow us to manually workaround
     # this behavior.
@@ -789,7 +811,7 @@ module AutoHCK
     def base_cmd
       [
         '@qemu_bin@ -enable-kvm -machine @machine_options@ ',
-        '-m @memory@,maxmem=@max_memory@@memory_slots@ -smp @cpu_count@,cores=@cpu_count@ ',
+        "-m @memory@,maxmem=@max_memory@@memory_slots@ #{smp_option} ",
         '-cpu @cpu_options@ -boot menu=on,splash-time=10000 ',
         '-nodefaults -no-user-config -usb -vnc :@vnc_id@ ',
         '-global kvm-pit.lost_tick_policy=discard -rtc base=localtime,clock=host,driftfix=slew ',
